@@ -22,10 +22,10 @@ public class KmeansController : ControllerBase
     [HttpPost("K-MeansClustering")]
     public IActionResult KMeansClustering(long vehicleId, int numberOfClusters)
     {
-        // Take all container belongs to vehicleId
+        // Take all containers belong to vehicleId
         var containers = _session.Containers.Where(x => x.VehicleId == vehicleId).ToArray();
 
-        // Check containers has item or not
+        // Check containers that have item or not
         if (containers.Length == 0) return BadRequest("Container not found.");
         // check given numberOfClusters 0 or less.
         if (numberOfClusters < 0) return BadRequest("numberOfClusters can not be 0 or less.");
@@ -94,8 +94,8 @@ public class KmeansController : ControllerBase
         resultCluster.AddRange(containerClusterRandomly);
 
 
-        var dimensions = containerCoordinates[0].Length; // Dimensions (x,y) -> 2
-        var timeout = 9999999999999999999; // Timeout for our while loop(should not run forever), it has to be limit.
+        var dimensions = containerCoordinates[0].Length; // Dimensions (x,y) = 2D
+        var timeout = 9999999999999999999; // Timeout for our while loop(should not run forever), Processes have to have a limit.
         var isUpdated = true; // condition for change clusters
 
         while (--timeout > 0)
@@ -113,7 +113,7 @@ public class KmeansController : ControllerBase
                                     .Average(x => x.Coordinate[eksen]))
                                 .ToArray())
                     ).ToArray();
-                isUpdated = false; // set false before opereation starts 
+                isUpdated = false; // set false before operation starts (for loop) 
                 //for loop
                 Parallel.For(0, resultCluster.Count, i =>
                 {
@@ -121,7 +121,7 @@ public class KmeansController : ControllerBase
                     var item = resultCluster[i];
                     // take ClusterIndex of item
                     var currentClusterIndexOfItem = item.ClusterIndex;
-                    //check the distance to centroids and take nearest centainers ClusterIndex
+                    //check the distance to centroids and take nearest containers ClusterIndex
                     var newClusterIndexOfItem = centroids.Select(n => (ClusterIndex: n.Cluster,
                             Distance: CalculateDistance(item.Coordinate, n.CentroidCoordinate))).MinBy(x => x.Distance)
                         .ClusterIndex;
@@ -144,13 +144,20 @@ public class KmeansController : ControllerBase
 
             catch (Exception e)
             {
-                // if given n is not suitable to cluster items, there is x(x<n) exists the algorithm can divide x group clusters, which that calculates x value.
+                // if given n is not suitable to cluster items, there is x (x<n) exists the algorithm can divide x group clusters, which that calculates x value.
                 var clusterCount = resultCluster.Select(n => new
                 {
                     ClusterIndex = n.ClusterIndex, Container = n.Container
-                }).GroupBy(n => n.ClusterIndex).ToList().Count;
-                var message = $"Given n value is not suitable to cluster that items.Cluster has reached {clusterCount} clusters. You can give n as {clusterCount}.";
-                return BadRequest(message);
+                }).GroupBy(n => n.ClusterIndex).ToList().Count();
+
+                if (clusterCount < numberOfClusters)
+                {
+                    var message = $"Given n value is not suitable to cluster that items.Cluster has reached {clusterCount} clusters. You can give n as {clusterCount}.";
+                    return BadRequest(message);
+                }
+
+                throw ;
+
             }
         } // while
 
@@ -158,7 +165,7 @@ public class KmeansController : ControllerBase
         var resultClusterModified = resultCluster.Select(n => new
         {
             n.ClusterIndex, n.Container
-        }).ToList();
+        }).GroupBy(n=>n.ClusterIndex, n=>n.Container).ToList();
 // return resultClusterModified
         return Ok(resultClusterModified);
     }
