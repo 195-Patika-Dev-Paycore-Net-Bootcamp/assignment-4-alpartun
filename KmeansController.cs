@@ -1,4 +1,5 @@
 using FluentNHibernate.Conventions;
+using FluentNHibernate.Utils;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.ML;
 using Microsoft.ML.Data;
@@ -13,7 +14,8 @@ namespace payCoreHW3.Controllers;
 public class KmeansController : ControllerBase
 {
     private readonly IMapperSession _session;
-
+    
+    // injection
     public KmeansController(IMapperSession session)
     {
         _session = session;
@@ -22,13 +24,13 @@ public class KmeansController : ControllerBase
     [HttpPost("K-MeansClustering")]
     public IActionResult KMeansClustering(long vehicleId, int numberOfClusters)
     {
-        // Take all containers belong to vehicleId
+        // Take all container belongs to vehicleId
         var containers = _session.Containers.Where(x => x.VehicleId == vehicleId).ToArray();
 
-        // Check containers that have item or not
+        // Check containers has item or not
         if (containers.Length == 0) return BadRequest("Container not found.");
         // check given numberOfClusters 0 or less.
-        if (numberOfClusters < 0) return BadRequest("numberOfClusters can not be 0 or less.");
+        if (numberOfClusters <= 0) return BadRequest("numberOfClusters can not be 0 or less.");
         // check given numberOfClusters bigger than container size.
         if (numberOfClusters > containers.Length)
             return BadRequest("numberOfClusters can not be bigger than container size.");
@@ -72,6 +74,8 @@ public class KmeansController : ControllerBase
         Bu listelerin icerisinde ClusterIndex-> Kumeleme icin
         Coordinate ->(x=latitude,y=longitude) Koordinatlar icin
         Container -> Container bilgisini saklayip sonrasinda result olarak dondurebilmek icin.
+        
+        Ek Not : Container listesini OrderBy ve new Guild yaparak karistirabiliriz.(sonradan arastirip buldugum icin koda eklemedim.)
          */
 
         var resultCluster = Enumerable
@@ -94,26 +98,49 @@ public class KmeansController : ControllerBase
         resultCluster.AddRange(containerClusterRandomly);
 
 
-        var dimensions = containerCoordinates[0].Length; // Dimensions (x,y) = 2D
-        var timeout = 9999999999999999999; // Timeout for our while loop(should not run forever), Processes have to have a limit.
+        var dimensions = containerCoordinates[0].Length; // Dimensions (x,y) -> 2
+        var timeout = 9999999999999999999; // Timeout for our while loop(should not run forever), it has to be limit.
         var isUpdated = true; // condition for change clusters
-
+        var isCentroidInitialized = false;
+        var controlArray = Enumerable.Range(0, numberOfClusters).ToArray();
         while (--timeout > 0)
         {
+            // Check is there any missing centroid clusterIndex, if it does then the next step will not execute because
+            // if there is no point with x(which is 0<x<=n) clusterIndex then program can not calculate the average of centroid coordinates.
+            //because we have no point for that centroid.
+            if (isCentroidInitialized)
+            {
+            // Taking indexes in current resultCluster
+                var clusterIndexArray = resultCluster.Select(n=>
+                    n.ClusterIndex
+                     
+                ).ToArray();
+                //Duplicated numbers are blocked using distinct
+                clusterIndexArray = clusterIndexArray.Distinct().ToArray();
+                //ordered array
+                var orderedClusterIndex= clusterIndexArray.OrderBy(x => x);
+             
+                var isIn = orderedClusterIndex.SequenceEqual(controlArray);
+                // check included or not
+                 if (!isIn) return Ok($"{numberOfClusters} is not suitable to cluster containers.");
+            }
+            
             try
             {
-                // Calculate centroids
-                var centroids = Enumerable.Range(0, numberOfClusters)
+            // Calculate centroids
+                 var centroids = Enumerable.Range(0, numberOfClusters)
                     .AsParallel()
                     .Select(index =>
                         (
                             Cluster: index,
                             CentroidCoordinate: Enumerable.Range(0, dimensions)
-                                .Select(eksen => resultCluster.Where(x => x.ClusterIndex == index)
-                                    .Average(x => x.Coordinate[eksen]))
+                                .Select(axis => resultCluster.Where(x => x.ClusterIndex == index)
+                                    .Average(x => x.Coordinate[axis]))
                                 .ToArray())
                     ).ToArray();
-                isUpdated = false; // set false before operation starts (for loop) 
+                 isCentroidInitialized = true;
+
+                isUpdated = false; // set false before opereation starts 
                 //for loop
                 Parallel.For(0, resultCluster.Count, i =>
                 {
@@ -121,7 +148,7 @@ public class KmeansController : ControllerBase
                     var item = resultCluster[i];
                     // take ClusterIndex of item
                     var currentClusterIndexOfItem = item.ClusterIndex;
-                    //check the distance to centroids and take nearest containers ClusterIndex
+                    //check the distance to centroids and take nearest centainers ClusterIndex
                     var newClusterIndexOfItem = centroids.Select(n => (ClusterIndex: n.Cluster,
                             Distance: CalculateDistance(item.Coordinate, n.CentroidCoordinate))).MinBy(x => x.Distance)
                         .ClusterIndex;
@@ -144,20 +171,8 @@ public class KmeansController : ControllerBase
 
             catch (Exception e)
             {
-                // if given n is not suitable to cluster items, there is x (x<n) exists the algorithm can divide x group clusters, which that calculates x value.
-                var clusterCount = resultCluster.Select(n => new
-                {
-                    ClusterIndex = n.ClusterIndex, Container = n.Container
-                }).GroupBy(n => n.ClusterIndex).ToList().Count();
 
-                if (clusterCount < numberOfClusters)
-                {
-                    var message = $"Given n value is not suitable to cluster that items.Cluster has reached {clusterCount} clusters. You can give n as {clusterCount}.";
-                    return BadRequest(message);
-                }
-
-                throw ;
-
+                throw;
             }
         } // while
 
@@ -165,12 +180,12 @@ public class KmeansController : ControllerBase
         var resultClusterModified = resultCluster.Select(n => new
         {
             n.ClusterIndex, n.Container
-        }).GroupBy(n=>n.ClusterIndex, n=>n.Container).ToList();
+        }).ToList();
 // return resultClusterModified
         return Ok(resultClusterModified);
     }
 
-    // Method for calculation distance
+    // Method for calculate distance
     private double CalculateDistance(double[] firstPoint, double[] secondPoint)
     {
         var distance = firstPoint
